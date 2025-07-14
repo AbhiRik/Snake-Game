@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <audio id="eatSound" src="https://cdn.pixabay.com/audio/2022/07/26/audio_124bfae3c2.mp3" preload="auto"></audio>
+  <audio id="gameOverSound" src="https://cdn.pixabay.com/audio/2022/07/26/audio_124bfae3c2.mp3" preload="auto"></audio>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Snake Game</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- haze effect removed -->
+  <div class="score">Score: <span id="score">0</span> | Best Score: <span id="bestScore">0</span></div>
+  <div class="controls" id="mainControls">
+    <button id="resetBestScore">Reset Best Score</button>
+    <button id="openPanelBtn">Game Modes</button>
+    <button class="modeBtn desktop-mode" onclick="setGameMode('easy')">Easy</button>
+    <button class="modeBtn desktop-mode" onclick="setGameMode('medium')">Medium</button>
+    <button class="modeBtn desktop-mode" onclick="setGameMode('hard')">Hard</button>
+  </div>
+
+  <div id="sidePanel" class="side-panel">
+    <button id="closePanelBtn" style="float:right;font-size:1.5rem;">&times;</button>
+    <h3 style="color:#fff;">Game Modes</h3>
+    <button class="modeBtn" onclick="setGameMode('easy')">Easy</button>
+    <button class="modeBtn" onclick="setGameMode('medium')">Medium</button>
+    <button class="modeBtn" onclick="setGameMode('hard')">Hard</button>
+  </div>
+
+  <canvas id="gameCanvas"></canvas>
+
+  <div class="touch-controls" id="touchControls" style="display:none; margin-top:20px;">
+    <div style="display:flex; flex-direction:column; align-items:center;">
+      <button id="upBtn" aria-label="Up" style="width:60px;height:60px;font-size:2rem;">▲</button>
+      <div>
+        <button id="leftBtn" aria-label="Left" style="width:60px;height:60px;font-size:2rem;">◀</button>
+        <button id="downBtn" aria-label="Down" style="width:60px;height:60px;font-size:2rem;">▼</button>
+        <button id="rightBtn" aria-label="Right" style="width:60px;height:60px;font-size:2rem;">▶</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="gameOver" class="game-over" style="display: none;">
+    <p>Game Over!</p>
+    <p>Your Score: <span id="finalScore">0</span></p>
+    <button onclick="restartGame()">Restart</button>
+  </div>
+
+  <script>
+    // Preload snake head image
+    const snakeHeadImg = new Image();
+    snakeHeadImg.src = 'snake.jpeg';
+    // haze effect removed
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreElement = document.getElementById('score');
+    const bestScoreElement = document.getElementById('bestScore');
+    const resetBestScoreButton = document.getElementById('resetBestScore');
+    const gameOverElement = document.getElementById('gameOver');
+    const finalScoreElement = document.getElementById('finalScore');
+    const body = document.body;
+    const touchControls = document.getElementById('touchControls');
+    const upBtn = document.getElementById('upBtn');
+    const downBtn = document.getElementById('downBtn');
+    const leftBtn = document.getElementById('leftBtn');
+    const rightBtn = document.getElementById('rightBtn');
+    const openPanelBtn = document.getElementById('openPanelBtn');
+    const closePanelBtn = document.getElementById('closePanelBtn');
+    const sidePanel = document.getElementById('sidePanel');
+
+    // Side panel logic for mobile
+    function updatePanelButton() {
+      if (window.innerWidth < 700) {
+        openPanelBtn.style.display = 'inline-block';
+      } else {
+        openPanelBtn.style.display = 'none';
+        sidePanel.classList.remove('open');
+      }
+    }
+    updatePanelButton();
+    window.addEventListener('resize', updatePanelButton);
+
+    openPanelBtn.addEventListener('click', () => {
+      sidePanel.classList.add('open');
+    });
+    closePanelBtn.addEventListener('click', () => {
+      sidePanel.classList.remove('open');
+    });
+    // Close panel if clicking outside
+    window.addEventListener('click', function(e) {
+      if (sidePanel.classList.contains('open') && !sidePanel.contains(e.target) && e.target !== openPanelBtn) {
+        sidePanel.classList.remove('open');
+      }
+    });
+
+    let gridSize = 20; // size of each grid cell (will be updated)
+    let tileCount = 30; // will be updated
+
+    function resizeCanvas() {
+      // Responsive: fit to window, keep square, max 95vw/vh, min 300px
+      let size = Math.min(window.innerWidth, window.innerHeight) * 0.95;
+      size = Math.max(300, Math.floor(size));
+      canvas.width = size;
+      canvas.height = size;
+      // Adjust grid size and tile count for responsiveness
+      tileCount = 20; // keep game playable on small screens
+      gridSize = Math.floor(size / tileCount);
+    }
+
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    // Show touch controls on small screens
+    function updateTouchControls() {
+      if (window.innerWidth < 700 || 'ontouchstart' in window) {
+        touchControls.style.display = 'block';
+      } else {
+        touchControls.style.display = 'none';
+      }
+    }
+    updateTouchControls();
+    window.addEventListener('resize', updateTouchControls);
+
+    let snake = [{ x: Math.floor(tileCount/2), y: Math.floor(tileCount/2) }];
+    let direction = { x: 0, y: 0 };
+    let food = generateFood();
+    let bigFood = null;
+    let score = 0;
+    let bestScore = localStorage.getItem('bestScore') ? parseInt(localStorage.getItem('bestScore')) : 0;
+    let gameSpeed = 150;
+
+    bestScoreElement.textContent = bestScore;
+
+    resetBestScoreButton.addEventListener('click', () => {
+      localStorage.setItem('bestScore', 0);
+      bestScore = 0;
+      bestScoreElement.textContent = bestScore;
+    });
+
+    function drawRect(x, y, color, gradient = false, isHead = false) {
+      // Draw shadow (ellipse under segment)
+      ctx.save();
+      ctx.globalAlpha = 0.25;
+      ctx.beginPath();
+      ctx.ellipse(
+        x * gridSize + gridSize / 2,
+        y * gridSize + gridSize / 2 + gridSize / 4,
+        gridSize / 2.5,
+        gridSize / 5,
+        0, 0, 2 * Math.PI
+      );
+      ctx.fillStyle = '#000';
+      ctx.fill();
+      ctx.restore();
+
+
+      // Draw snake head with image if isHead, rotated to match direction
+      if (isHead && snakeHeadImg.complete && snakeHeadImg.naturalWidth > 0) {
+        ctx.save();
+        // Calculate center
+        const cx = x * gridSize + gridSize / 2;
+        const cy = y * gridSize + gridSize / 2;
+        // Determine angle from direction
+        let angle = 0;
+        if (direction.x === 1 && direction.y === 0) angle = 0; // right
+        else if (direction.x === -1 && direction.y === 0) angle = Math.PI; // left
+        else if (direction.x === 0 && direction.y === -1) angle = -Math.PI / 2; // up
+        else if (direction.x === 0 && direction.y === 1) angle = Math.PI / 2; // down
+        ctx.translate(cx, cy);
+        ctx.rotate(angle);
+        ctx.beginPath();
+        ctx.arc(0, 0, gridSize / 2.5, 0, 2 * Math.PI);
+        ctx.closePath();
+        ctx.clip();
+        ctx.drawImage(
+          snakeHeadImg,
+          -gridSize / 2.5,
+          -gridSize / 2.5,
+          gridSize / 1.25,
+          gridSize / 1.25
+        );
+        ctx.restore();
+      } else {
+        // 3D gradient body (original)
+        if (gradient) {
+          const grad = ctx.createRadialGradient(
+            x * gridSize + gridSize / 2,
+            y * gridSize + gridSize / 2,
+            gridSize / 6,
+            x * gridSize + gridSize / 2,
+            y * gridSize + gridSize / 2,
+            gridSize / 1.7
+          );
+          grad.addColorStop(0, isHead ? "#fffbe0" : "#ffa600");
+          grad.addColorStop(0.5, isHead ? "#FFD700" : "#ffa600");
+          grad.addColorStop(1, isHead ? "#FFA500" : "#ffa600");
+          ctx.fillStyle = grad;
+        } else {
+          ctx.fillStyle = color;
+        }
+        ctx.beginPath();
+        ctx.arc(
+          x * gridSize + gridSize / 2,
+          y * gridSize + gridSize / 2,
+          gridSize / 2.5,
+          0,
+          2 * Math.PI
+        );
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Highlight (top arc)
+      ctx.save();
+      ctx.globalAlpha = 0.25;
+      ctx.beginPath();
+      ctx.ellipse(
+        x * gridSize + gridSize / 2,
+        y * gridSize + gridSize / 2 - gridSize / 6,
+        gridSize / 3,
+        gridSize / 8,
+        0, 0, Math.PI * 2
+      );
+      ctx.fillStyle = '#fff';
+      ctx.fill();
+      ctx.restore();
+
+      // Eyes and mouth removed for image head
+    }
+
+    function drawCircle(x, y, color, isBig = false) {
+      ctx.fillStyle = isBig ? "#FF1493" : color;
+      const radius = isBig ? gridSize / 1.5 : gridSize / 2.5;
+      ctx.beginPath();
+      ctx.arc(x * gridSize + gridSize / 2, y * gridSize + gridSize / 2, radius, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+
+    function generateFood() {
+      return {
+        x: Math.floor(Math.random() * tileCount),
+        y: Math.floor(Math.random() * tileCount),
+      };
+    }
+
+    function generateBigFood() {
+      return Math.random() < 0.1
+        ? { x: Math.floor(Math.random() * tileCount), y: Math.floor(Math.random() * tileCount) }
+        : null;
+    }
+
+    function drawGame() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw the snake
+      snake.forEach((segment, index) => {
+        const isHead = index === 0;
+        drawRect(segment.x, segment.y, isHead ? '#FFD700' : '#00FF00', true, isHead);
+      });
+
+      // Draw the food
+      drawCircle(food.x, food.y, "#FF0000");
+
+      // Draw the big food if it exists
+      if (bigFood) {
+        drawCircle(bigFood.x, bigFood.y, "#FF1493", true);
+      }
+
+      // Move the snake
+      const head = { x: snake[0].x + direction.x, y: snake[0].y + direction.y };
+      snake.unshift(head);
+
+      // Check if the snake eats the food
+      if (head.x === food.x && head.y === food.y) {
+        score++;
+        scoreElement.textContent = score;
+        food = generateFood();
+        bigFood = generateBigFood();
+      } else if (bigFood && head.x === bigFood.x && head.y === bigFood.y) {
+        score += 5; // Big food gives extra points
+        scoreElement.textContent = score;
+        bigFood = null;
+      } else {
+        snake.pop(); // Remove the tail
+      }
+
+      // Check collisions
+      if (
+        head.x < 0 || head.x >= tileCount ||
+        head.y < 0 || head.y >= tileCount ||
+        snake.slice(1).some(segment => segment.x === head.x && segment.y === head.y)
+      ) {
+        if (score > bestScore) {
+          bestScore = score;
+          localStorage.setItem('bestScore', bestScore);
+          bestScoreElement.textContent = bestScore;
+        }
+        showGameOver();
+      }
+    }
+
+    function resetGame() {
+      snake = [{ x: Math.floor(tileCount/2), y: Math.floor(tileCount/2) }];
+      direction = { x: 0, y: 0 };
+      food = generateFood();
+      bigFood = null;
+      score = 0;
+      scoreElement.textContent = score;
+    }
+
+    function changeDirection(event) {
+      let key = event.key || event;
+      switch (key) {
+        case 'ArrowUp':
+        case 'Up':
+          if (direction.y === 0) direction = { x: 0, y: -1 };
+          break;
+        case 'ArrowDown':
+        case 'Down':
+          if (direction.y === 0) direction = { x: 0, y: 1 };
+          break;
+        case 'ArrowLeft':
+        case 'Left':
+          if (direction.x === 0) direction = { x: -1, y: 0 };
+          break;
+        case 'ArrowRight':
+        case 'Right':
+          if (direction.x === 0) direction = { x: 1, y: 0 };
+          break;
+      }
+    }
+
+    document.addEventListener('keydown', changeDirection);
+
+    // Touch controls
+    upBtn.addEventListener('touchstart', () => changeDirection('ArrowUp'));
+    downBtn.addEventListener('touchstart', () => changeDirection('ArrowDown'));
+    leftBtn.addEventListener('touchstart', () => changeDirection('ArrowLeft'));
+    rightBtn.addEventListener('touchstart', () => changeDirection('ArrowRight'));
+
+    // Also allow click for desktop testing
+    upBtn.addEventListener('click', () => changeDirection('ArrowUp'));
+    downBtn.addEventListener('click', () => changeDirection('ArrowDown'));
+    leftBtn.addEventListener('click', () => changeDirection('ArrowLeft'));
+    rightBtn.addEventListener('click', () => changeDirection('ArrowRight'));
+
+    function setGameMode(mode) {
+      if (mode === 'easy') {
+        gameSpeed = 150;
+        body.className = 'environment-easy';
+      } else if (mode === 'medium') {
+        gameSpeed = 100;
+        body.className = 'environment-medium';
+      } else if (mode === 'hard') {
+        gameSpeed = 50;
+        body.className = 'environment-hard';
+      }
+    }
+
+    function showGameOver() {
+      gameOverElement.style.display = 'block';
+      finalScoreElement.textContent = score;
+      clearInterval(gameInterval);
+    }
+
+    function restartGame() {
+      gameOverElement.style.display = 'none';
+      resetGame();
+      gameLoop();
+    }
+
+    let lastFrameTime = 0;
+    let frameAccumulator = 0;
+    let running = true;
+
+    // Sound elements
+    const eatSound = document.getElementById('eatSound');
+    const gameOverSound = document.getElementById('gameOverSound');
+
+    function gameLoopRAF(timestamp) {
+      if (!running) return;
+      if (!lastFrameTime) lastFrameTime = timestamp;
+      frameAccumulator += timestamp - lastFrameTime;
+      lastFrameTime = timestamp;
+      while (frameAccumulator > gameSpeed) {
+        drawGame();
+        frameAccumulator -= gameSpeed;
+      }
+      requestAnimationFrame(gameLoopRAF);
+    }
+
+    // Override showGameOver to play sound and stop loop
+    function showGameOver() {
+      gameOverElement.style.display = 'block';
+      finalScoreElement.textContent = score;
+      running = false;
+      gameOverSound.currentTime = 0;
+      gameOverSound.play();
+    }
+
+    // Override restartGame to reset animation state
+    function restartGame() {
+      gameOverElement.style.display = 'none';
+      resetGame();
+      running = true;
+      lastFrameTime = 0;
+      frameAccumulator = 0;
+      requestAnimationFrame(gameLoopRAF);
+    }
+
+    // Patch drawGame to play eat sound
+    const origDrawGame = drawGame;
+    drawGame = function() {
+      let prevScore = score;
+      origDrawGame();
+      if (score > prevScore) {
+        eatSound.currentTime = 0;
+        eatSound.play();
+      }
+    }
+
+    // Start the game
+    requestAnimationFrame(gameLoopRAF);
+  </script>
+</body>
+</html>
